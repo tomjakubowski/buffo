@@ -64,8 +64,7 @@ impl Buffo {
     }
 
     // TODO: iter_strs
-    pub fn collect_strs(&self) -> Vec<&str> {
-        let mut result = vec![];
+    pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
         // Advanced in the loop below
         let mut index_cursor = Cursor::new(self.as_bytes());
         let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
@@ -74,16 +73,12 @@ impl Buffo {
         let blob_start = INDEX_COUNT_SERIAL_SIZE + index_len;
         let blob = &self.as_bytes()[blob_start..];
 
-        for _ in 0..index_count {
+        (0..index_count).map(move |_| {
             let data_idx = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
             let data_len = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
             let str_len = data_len - 1; // slice off NUL terminal
-            result.push(
-                std::str::from_utf8(&blob[data_idx..data_idx + str_len]).expect("invalid UTF-8"),
-            );
-        }
-
-        result
+            std::str::from_utf8(&blob[data_idx..data_idx + str_len]).expect("invalid UTF-8")
+        })
     }
 }
 
@@ -150,7 +145,7 @@ mod tests {
         let input = vec!["Foo", "Bar", "Hello world"];
         let buffo = Buffo::str_array(input.clone());
         xxd(buffo.as_bytes());
-        let output = buffo.collect_strs();
+        let output: Vec<&str> = buffo.iter_strs().collect();
         assert_eq!(input, output);
     }
 }
