@@ -8,6 +8,9 @@ use std::{
 #[derive(Debug)]
 pub struct Buffo(Vec<u8>);
 
+const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
+const INDEX_ITEM_SERIAL_SIZE: usize = 2 * size_of::<u32>();
+
 impl Buffo {
     pub fn str_array<'a, T>(strs: T) -> Buffo
     where
@@ -41,7 +44,7 @@ impl Buffo {
         if i >= index_count {
             return None;
         }
-        let item_idx: usize = (i as usize) * 2 * size_of::<u32>();
+        let item_idx: usize = (i as usize) * INDEX_ITEM_SERIAL_SIZE;
         cur.seek(SeekFrom::Current(item_idx as i64)).unwrap();
 
         // Read out IndexItem
@@ -50,26 +53,37 @@ impl Buffo {
 
         // StrArray buffo layout:
         // [index_count: u32, (idx: u32, len: u32)..., [data: u8, ...]]
-        let index_len = index_count as usize * 2 * size_of::<u32>();
-        // Skip over the index_count 4-byte hunk, then the index items
-        let data_start = size_of::<u32>() + index_len as usize + data_idx as usize;
-        let data_len = data_len - 1; // slice off NUL terminal
-        let data: &[u8] = &self.as_bytes()[data_start..data_start + data_len as usize];
+        let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
+        // Skip over the index_count 4-byte hunk and the index items
+        let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx as usize;
+        let str_len = data_len - 1; // slice off NUL terminal
+
+        // NB: malicious data could make this panic for OOB access
+        let data: &[u8] = &self.as_bytes()[data_start..data_start + str_len as usize];
         std::str::from_utf8(data).ok()
     }
 
     // TODO: iter_strs
     pub fn collect_strs(&self) -> Vec<&str> {
-        // let mut result = vec![];
-        // let mut cur = Cursor::new(self.as_bytes());
-        // let index_len = cur.read_u32::<LittleEndian>().unwrap();
-        // // The nth index item is at i * sizeof(IndexItem)
-        // let foo: usize = (i as usize) * 2 * size_of::<u32>();
-        // cur.seek(SeekFrom::Current(foo as i64)).unwrap();
-        // let data_idx = cur.read_u32::<LittleEndian>().unwrap();
-        // let data_len = cur.read_u32::<LittleEndian>().unwrap();
+        let mut result = vec![];
+        // Advanced in the loop below
+        let mut index_cursor = Cursor::new(self.as_bytes());
+        let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
 
-        panic!()
+        let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
+        let blob_start = INDEX_COUNT_SERIAL_SIZE + index_len;
+        let blob = &self.as_bytes()[blob_start..];
+
+        for _ in 0..index_count {
+            let data_idx = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
+            let data_len = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
+            let str_len = data_len - 1; // slice off NUL terminal
+            result.push(
+                std::str::from_utf8(&blob[data_idx..data_idx + str_len]).expect("invalid UTF-8"),
+            );
+        }
+
+        result
     }
 }
 
@@ -85,6 +99,7 @@ struct IndexItem {
 
 // StrArray buffo layout:
 // [index_count: u32, [(idx: u32, len: u32)], [data blob]]
+// Each idx is an offset into [data blob]
 fn write_buffo<W>(parts: BuffoParts, mut cursor: W) -> io::Result<()>
 where
     W: Write,
@@ -128,5 +143,14 @@ mod tests {
         assert_eq!("Bar", buffo.nth_str(1).unwrap());
         assert_eq!("Hello world", buffo.nth_str(2).unwrap());
         assert_eq!(None, buffo.nth_str(3));
+    }
+
+    #[test]
+    fn test_collect() {
+        let input = vec!["Foo", "Bar", "Hello world"];
+        let buffo = Buffo::str_array(input.clone());
+        xxd(buffo.as_bytes());
+        let output = buffo.collect_strs();
+        assert_eq!(input, output);
     }
 }
