@@ -15,16 +15,15 @@ impl Buffo {
     {
         let mut index: Vec<IndexItem> = vec![];
         let mut data = vec![];
-        let mut cursor = 0usize; // tracks idx into data buffer
         for s in strs {
+            // This datum starts after the last datum ended
+            let idx: u32 = data.len().try_into().expect("too much data");
             data.extend_from_slice(s.as_bytes());
             data.push(0u8); // NUL-terminate for C string compatibility
             let len = (s.as_bytes().len() + 1)
                 .try_into()
                 .expect("string too long");
-            let idx: u32 = cursor.try_into().expect("too much data");
             index.push(IndexItem { idx, len });
-            cursor += len as usize;
         }
 
         let mut output = io::Cursor::new(vec![]);
