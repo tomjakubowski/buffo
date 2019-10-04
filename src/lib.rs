@@ -1,3 +1,9 @@
+//! Implements "Buffo", a binary data format for arrays of UTF-8 strings.
+//! Ideas for further work:
+//!   * Store types of data other than &str
+//!   * Use a zero-sized type for reading / slicing buffo (akin to str/String)
+//!   * Property testing with proptest: https://github.com/AltSysrq/proptest
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
     convert::TryInto,
@@ -6,6 +12,12 @@ use std::{
 };
 
 #[derive(Debug)]
+/// StrArray buffo layout:
+///
+/// ```text
+/// [index_count: u32, [(idx: u32, len: u32)], [data blob] : [u8]]
+/// ```
+/// Each `idx` is an offset into `[data blob]`
 pub struct Buffo(Vec<u8>);
 
 const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
@@ -51,8 +63,6 @@ impl Buffo {
         let data_idx = cur.read_u32::<LittleEndian>().unwrap();
         let data_len = cur.read_u32::<LittleEndian>().unwrap();
 
-        // StrArray buffo layout:
-        // [index_count: u32, (idx: u32, len: u32)..., [data: u8, ...]]
         let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
         // Skip over the index_count 4-byte hunk and the index items
         let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx as usize;
@@ -121,6 +131,7 @@ where
 mod tests {
     use super::*;
 
+    // debug function
     fn xxd(xs: &[u8]) {
         for (i, x) in xs.iter().enumerate() {
             print!("{:02x}", x);
