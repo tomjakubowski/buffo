@@ -58,7 +58,8 @@ impl Buffo {
         let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx as usize;
         let str_len = data_len - 1; // slice off NUL terminal
 
-        // NB: malicious data could make this panic for OOB access
+        // NB: malicious index data (i.e. with a bad idx or len) could make this panic for OOB
+        // access
         let data: &[u8] = &self.as_bytes()[data_start..data_start + str_len as usize];
         std::str::from_utf8(data).ok()
     }
