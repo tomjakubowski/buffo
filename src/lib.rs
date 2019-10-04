@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
     convert::TryInto,
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, Cursor, Seek, SeekFrom, Write},
     mem::size_of,
 };
 
@@ -38,22 +38,39 @@ impl Buffo {
 
     pub fn nth_str(&self, i: u32) -> Option<&str> {
         let mut cur = Cursor::new(self.as_bytes());
-        let index_len = cur.read_u32::<LittleEndian>().unwrap();
-        // The nth index item is at i * sizeof(IndexItem)
-        let foo: usize = (i as usize) * 2 * size_of::<u32>();
-        cur.seek(SeekFrom::Current(foo as i64)).unwrap();
-        println!("seeking ahead {}", foo);
+        let index_count = cur.read_u32::<LittleEndian>().unwrap();
+        if i >= index_count {
+            return None;
+        }
+        let item_idx: usize = (i as usize) * 2 * size_of::<u32>();
+        cur.seek(SeekFrom::Current(item_idx as i64)).unwrap();
+
+        // Read out IndexItem
         let data_idx = cur.read_u32::<LittleEndian>().unwrap();
-        println!("idx: {:?}", data_idx);
         let data_len = cur.read_u32::<LittleEndian>().unwrap();
-        println!("len: {:?}", data_len);
 
         // StrArray buffo layout:
-        // [index_len: u32, [(idx: u32, len: u32)], [data blob]]
+        // [index_count: u32, (idx: u32, len: u32)..., [data: u8, ...]]
+        let index_len = index_count as usize * 2 * size_of::<u32>();
+        // Skip over the index_count 4-byte hunk, then the index items
         let data_start = size_of::<u32>() + index_len as usize + data_idx as usize;
-        let data_len = data_len - 1; // slice off NUL byte
+        let data_len = data_len - 1; // slice off NUL terminal
         let data: &[u8] = &self.as_bytes()[data_start..data_start + data_len as usize];
         std::str::from_utf8(data).ok()
+    }
+
+    // TODO: iter_strs
+    pub fn collect_strs(&self) -> Vec<&str> {
+        // let mut result = vec![];
+        // let mut cur = Cursor::new(self.as_bytes());
+        // let index_len = cur.read_u32::<LittleEndian>().unwrap();
+        // // The nth index item is at i * sizeof(IndexItem)
+        // let foo: usize = (i as usize) * 2 * size_of::<u32>();
+        // cur.seek(SeekFrom::Current(foo as i64)).unwrap();
+        // let data_idx = cur.read_u32::<LittleEndian>().unwrap();
+        // let data_len = cur.read_u32::<LittleEndian>().unwrap();
+
+        panic!()
     }
 }
 
@@ -68,14 +85,17 @@ struct IndexItem {
 }
 
 // StrArray buffo layout:
-// [index_len: u32, [(idx: u32, len: u32)], [data blob]]
+// [index_count: u32, [(idx: u32, len: u32)], [data blob]]
 fn write_buffo<W>(parts: BuffoParts, mut cursor: W) -> io::Result<()>
 where
     W: Write,
 {
-    let index_len = parts.index.len() * 2 * size_of::<u32>();
-    dbg!(index_len);
-    cursor.write_u32::<LittleEndian>(index_len.try_into().expect("foo"))?;
+    let index_count: u32 = parts
+        .index
+        .len()
+        .try_into()
+        .expect("Too many items for buffo");
+    cursor.write_u32::<LittleEndian>(index_count)?;
     for x in parts.index {
         cursor.write_u32::<LittleEndian>(x.idx)?;
         cursor.write_u32::<LittleEndian>(x.len)?;
@@ -90,7 +110,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use byteorder::ReadBytesExt;
 
     fn xxd(xs: &[u8]) {
         for (i, x) in xs.iter().enumerate() {
@@ -106,8 +125,9 @@ mod tests {
         let input = vec!["Foo", "Bar", "Hello world"];
         let buffo = Buffo::str_array(input);
         xxd(buffo.as_bytes());
-        // println!("{:?}", buffo.as_bytes());
         assert_eq!("Foo", buffo.nth_str(0).unwrap());
         assert_eq!("Bar", buffo.nth_str(1).unwrap());
+        assert_eq!("Hello world", buffo.nth_str(2).unwrap());
+        assert_eq!(None, buffo.nth_str(3));
     }
 }
