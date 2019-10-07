@@ -57,6 +57,7 @@ impl Buffo {
 
     pub fn nth_str(&self, i: u32) -> Option<&str> {
         let mut cur = Cursor::new(self.as_bytes());
+        // Find position of IndexItem in buffo + read it out
         let index_count = cur.read_u32::<LittleEndian>().unwrap();
         if i >= index_count {
             return None;
@@ -64,19 +65,20 @@ impl Buffo {
         let item_idx: usize = (i as usize) * INDEX_ITEM_SERIAL_SIZE;
         cur.seek(SeekFrom::Current(item_idx as i64)).unwrap();
 
-        // Read out IndexItem
-        let data_idx = cur.read_u32::<LittleEndian>().unwrap() as usize;
-        let data_len = cur.read_u32::<LittleEndian>().unwrap() as usize;
+        let item = IndexItem::buffo_read(&mut cur).unwrap();
+        let datum_idx = item.idx as usize;
+        let datum_len = item.len as usize;
 
+        // Slice into data blob
         let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
         // Skip over the index_count 4-byte hunk and the index items
-        let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx;
-        let str_len = data_len - DATA_DELIM.len();
+        let datum_start = INDEX_COUNT_SERIAL_SIZE + index_len + datum_idx;
+        let str_len = datum_len - DATA_DELIM.len();
 
         // NB: malicious index data (i.e. with a bad idx or len) could make this panic for OOB
         // access
-        let data: &[u8] = &self.as_bytes()[data_start..data_start + str_len];
-        std::str::from_utf8(data).ok()
+        let datum: &[u8] = &self.as_bytes()[datum_start..datum_start + str_len];
+        std::str::from_utf8(datum).ok()
     }
 
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
@@ -88,10 +90,11 @@ impl Buffo {
         let blob = &self.as_bytes()[blob_start..];
 
         (0..index_count).map(move |_| {
-            let data_idx = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
-            let data_len = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
-            let str_len = data_len - DATA_DELIM.len();
-            std::str::from_utf8(&blob[data_idx..data_idx + str_len]).expect("invalid UTF-8")
+            let item = IndexItem::buffo_read(&mut index_cursor).unwrap();
+            let datum_idx = item.idx as usize;
+            let datum_len = item.len as usize;
+            let str_len = datum_len - DATA_DELIM.len();
+            std::str::from_utf8(&blob[datum_idx..datum_idx + str_len]).expect("invalid UTF-8")
         })
     }
 }
@@ -104,6 +107,26 @@ struct BuffoParts {
 struct IndexItem {
     idx: u32,
     len: u32, // includes NUL-terminator
+}
+
+impl IndexItem {
+    fn buffo_write<W>(&self, mut wr: W) -> io::Result<()>
+    where
+        W: io::Write,
+    {
+        wr.write_u32::<LittleEndian>(self.idx)?;
+        wr.write_u32::<LittleEndian>(self.len)?;
+        Ok(())
+    }
+
+    fn buffo_read<R>(mut r: R) -> io::Result<IndexItem>
+    where
+        R: io::Read,
+    {
+        let idx = r.read_u32::<LittleEndian>()?;
+        let len = r.read_u32::<LittleEndian>()?;
+        Ok(IndexItem { idx, len })
+    }
 }
 
 // StrArray buffo layout:
@@ -120,8 +143,7 @@ where
         .expect("Too many items for buffo");
     cursor.write_u32::<LittleEndian>(index_count)?;
     for x in parts.index {
-        cursor.write_u32::<LittleEndian>(x.idx)?;
-        cursor.write_u32::<LittleEndian>(x.len)?;
+        x.buffo_write(&mut cursor)?;
         // Sanity check bounds
         let x_end = x.idx as usize + x.len as usize;
         assert!(x_end <= parts.data.len())
