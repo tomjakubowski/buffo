@@ -16,6 +16,7 @@ use std::{convert::TryInto, io, mem::size_of};
 #[derive(Debug)]
 pub struct Buffo(Vec<u8>);
 
+// Constants for Buffo's layout
 const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
 const INDEX_ITEMS_BEGIN: usize = INDEX_COUNT_SERIAL_SIZE;
 const INDEX_ITEM_SERIAL_SIZE: usize = 2 * size_of::<u32>();
@@ -61,15 +62,7 @@ impl Buffo {
     }
 
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
-        let blob = self.data_blob();
-
-        (0..self.index_count()).map(move |i| {
-            let item = self.nth_index_item(i).unwrap();
-            let datum_idx = item.idx as usize;
-            let datum_len = item.len as usize;
-            let str_len = datum_len - DATA_DELIM.len();
-            std::str::from_utf8(&blob[datum_idx..datum_idx + str_len]).expect("invalid UTF-8")
-        })
+        (0..self.index_count()).map(move |i| self.nth_str(i).unwrap())
     }
 
     pub fn as_bytes(&self) -> &[u8] {
