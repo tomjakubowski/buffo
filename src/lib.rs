@@ -11,13 +11,13 @@ use std::{
     mem::size_of,
 };
 
-#[derive(Debug)]
 /// StrArray buffo layout:
 ///
 /// ```text
 /// [index_count: u32, [(idx: u32, len: u32)], [data blob] : [u8]]
 /// ```
 /// Each `idx` is an offset into `[data blob]`
+#[derive(Debug)]
 pub struct Buffo(Vec<u8>);
 
 const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
@@ -37,7 +37,6 @@ impl Buffo {
         for s in strs {
             let s: &str = s.as_ref();
             let bytes = s.as_bytes();
-            // This datum starts after the last datum ended
             let idx: u32 = data.len().try_into().expect("too much data");
             data.extend_from_slice(bytes);
             data.extend_from_slice(DATA_DELIM);
@@ -81,7 +80,6 @@ impl Buffo {
     }
 
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
-        // Advanced in the loop below
         let mut index_cursor = Cursor::new(self.as_bytes());
         let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
 
@@ -143,6 +141,13 @@ mod tests {
                 println!("");
             }
         }
+    }
+
+    #[test]
+    fn test_trivial() {
+        let input: Vec<&str> = vec![];
+        let buffo = Buffo::str_array(input);
+        assert_eq!(None, buffo.nth_str(0));
     }
 
     #[test]
