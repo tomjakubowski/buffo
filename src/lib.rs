@@ -7,7 +7,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
     convert::TryInto,
-    io::{self, Cursor, Seek, SeekFrom, Write},
+    io::{self, Cursor, Write},
     mem::size_of,
 };
 
@@ -21,6 +21,7 @@ use std::{
 pub struct Buffo(Vec<u8>);
 
 const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
+const INDEX_ITEMS_BEGIN: usize = INDEX_COUNT_SERIAL_SIZE;
 const INDEX_ITEM_SERIAL_SIZE: usize = 2 * size_of::<u32>();
 // A delimiter isn't strictly necessary, but this one is nice because it provides C-string
 // compatibility.
@@ -51,33 +52,15 @@ impl Buffo {
         Buffo(output.into_inner())
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
     pub fn nth_str(&self, i: u32) -> Option<&str> {
-        let mut cur = Cursor::new(self.as_bytes());
-        // Find position of IndexItem in buffo + read it out
-        let index_count = cur.read_u32::<LittleEndian>().unwrap();
-        if i >= index_count {
-            return None;
-        }
-        let item_idx: usize = (i as usize) * INDEX_ITEM_SERIAL_SIZE;
-        cur.seek(SeekFrom::Current(item_idx as i64)).unwrap();
-
-        let item = IndexItem::buffo_read(&mut cur).unwrap();
+        let item = self.nth_index_item(i)?;
         let datum_idx = item.idx as usize;
         let datum_len = item.len as usize;
-
-        // Slice into data blob
-        let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
-        // Skip over the index_count 4-byte hunk and the index items
-        let datum_start = INDEX_COUNT_SERIAL_SIZE + index_len + datum_idx;
         let str_len = datum_len - DATA_DELIM.len();
 
         // NB: malicious index data (i.e. with a bad idx or len) could make this panic for OOB
         // access
-        let datum: &[u8] = &self.as_bytes()[datum_start..datum_start + str_len];
+        let datum: &[u8] = &self.data_blob()[datum_idx..datum_idx + str_len];
         std::str::from_utf8(datum).ok()
     }
 
@@ -85,9 +68,7 @@ impl Buffo {
         let mut index_cursor = Cursor::new(self.as_bytes());
         let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
 
-        let index_len = index_count * INDEX_ITEM_SERIAL_SIZE;
-        let blob_start = INDEX_COUNT_SERIAL_SIZE + index_len;
-        let blob = &self.as_bytes()[blob_start..];
+        let blob = self.data_blob();
 
         (0..index_count).map(move |_| {
             let item = IndexItem::buffo_read(&mut index_cursor).unwrap();
@@ -96,6 +77,37 @@ impl Buffo {
             let str_len = datum_len - DATA_DELIM.len();
             std::str::from_utf8(&blob[datum_idx..datum_idx + str_len]).expect("invalid UTF-8")
         })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn index_count(&self) -> u32 {
+        self.as_bytes().read_u32::<LittleEndian>().unwrap()
+    }
+
+    fn nth_index_item(&self, i: u32) -> Option<IndexItem> {
+        if i >= self.index_count() {
+            return None;
+        }
+        let pos = i as usize * INDEX_ITEM_SERIAL_SIZE;
+        let serialized_item = &self.index_blob()[pos..pos + INDEX_ITEM_SERIAL_SIZE];
+        let item = IndexItem::buffo_read(serialized_item).expect("buffo_read error");
+        Some(item)
+    }
+
+    fn index_blob(&self) -> &[u8] {
+        let count = self.index_count() as usize;
+        let blob_len = INDEX_ITEM_SERIAL_SIZE * count;
+        let begin = INDEX_ITEMS_BEGIN;
+        &self.as_bytes()[begin..begin + blob_len]
+    }
+
+    fn data_blob(&self) -> &[u8] {
+        let count = self.index_count() as usize;
+        let data_start = INDEX_ITEMS_BEGIN + count * INDEX_ITEM_SERIAL_SIZE;
+        &self.as_bytes()[data_start..]
     }
 }
 
@@ -166,7 +178,15 @@ mod tests {
     }
 
     #[test]
-    fn test_trivial() {
+    fn test_index_item_size() {
+        let mut out = vec![];
+        let item = IndexItem { idx: 2, len: 9000 };
+        item.buffo_write(&mut out).unwrap();
+        assert_eq!(INDEX_ITEM_SERIAL_SIZE, out.len());
+    }
+
+    #[test]
+    fn test_trivial_buffo() {
         let input: Vec<&str> = vec![];
         let buffo = Buffo::str_array(input);
         assert_eq!(None, buffo.nth_str(0));
