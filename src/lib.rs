@@ -25,6 +25,13 @@ const INDEX_ITEM_SERIAL_SIZE: usize = 2 * size_of::<u32>();
 const DATA_DELIM: &[u8] = b"\0";
 
 impl Buffo {
+    /// Construct Buffo from a byte buffer
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffo, ()> {
+        // TODO: validate the bytes!
+        Ok(Buffo(bytes))
+    }
+
+    /// Construct Buffo from something which iterates strings
     pub fn str_array<'a, S, T>(strs: T) -> Buffo
     where
         T: IntoIterator<Item = S>,
@@ -49,6 +56,7 @@ impl Buffo {
         Buffo(output.into_inner())
     }
 
+    /// Access the `i`th string in the Buffo.
     pub fn nth_str(&self, i: u32) -> Option<&str> {
         let item = self.nth_index_item(i)?;
         let datum_idx = item.idx as usize;
@@ -61,8 +69,18 @@ impl Buffo {
         std::str::from_utf8(datum).ok()
     }
 
+    /// Iterate all strings in the Buffo.
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
         (0..self.index_count()).map(move |i| self.nth_str(i).unwrap())
+    }
+
+    /// Get count of strings in the Buffo.
+    pub fn count(&self) -> u32 {
+        self.index_count()
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
     }
 
     pub fn as_bytes(&self) -> &[u8] {
