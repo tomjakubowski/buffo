@@ -5,11 +5,7 @@
 //!   * Property testing with proptest: https://github.com/AltSysrq/proptest
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::{
-    convert::TryInto,
-    io::{self, Write},
-    mem::size_of,
-};
+use std::{convert::TryInto, io, mem::size_of};
 
 /// StrArray buffo layout:
 ///
@@ -143,7 +139,7 @@ impl IndexItem {
 // Each idx is an offset into [data blob]
 fn write_buffo<W>(parts: BuffoParts, mut cursor: W) -> io::Result<()>
 where
-    W: Write,
+    W: io::Write,
 {
     let index_count: u32 = parts
         .index
