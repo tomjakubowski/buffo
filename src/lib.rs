@@ -1,8 +1,8 @@
 //! Implements "Buffo", a binary data format for arrays of UTF-8 strings.
 //! Ideas for further work:
+//!   * Store a hash map
 //!   * Store types of data other than &str
 //!   * Use a zero-sized type for reading / slicing buffo (akin to str/String)
-//!   * Property testing with proptest: https://github.com/AltSysrq/proptest
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{convert::TryInto, io, mem::size_of};
