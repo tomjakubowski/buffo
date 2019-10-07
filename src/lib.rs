@@ -22,20 +22,26 @@ pub struct Buffo(Vec<u8>);
 
 const INDEX_COUNT_SERIAL_SIZE: usize = size_of::<u32>();
 const INDEX_ITEM_SERIAL_SIZE: usize = 2 * size_of::<u32>();
+// A delimiter isn't strictly necessary, but this one is nice because it provides C-string
+// compatibility.
+const DATA_DELIM: &[u8] = b"\0";
 
 impl Buffo {
-    pub fn str_array<'a, T>(strs: T) -> Buffo
+    pub fn str_array<'a, S, T>(strs: T) -> Buffo
     where
-        T: IntoIterator<Item = &'a str>,
+        T: IntoIterator<Item = S>,
+        S: AsRef<str>,
     {
         let mut index: Vec<IndexItem> = vec![];
         let mut data = vec![];
         for s in strs {
+            let s: &str = s.as_ref();
+            let bytes = s.as_bytes();
             // This datum starts after the last datum ended
             let idx: u32 = data.len().try_into().expect("too much data");
-            data.extend_from_slice(s.as_bytes());
-            data.push(0u8); // NUL-terminate for C string compatibility
-            let len = (s.as_bytes().len() + 1)
+            data.extend_from_slice(bytes);
+            data.extend_from_slice(DATA_DELIM);
+            let len = (bytes.len() + DATA_DELIM.len())
                 .try_into()
                 .expect("string too long");
             index.push(IndexItem { idx, len });
@@ -60,34 +66,33 @@ impl Buffo {
         cur.seek(SeekFrom::Current(item_idx as i64)).unwrap();
 
         // Read out IndexItem
-        let data_idx = cur.read_u32::<LittleEndian>().unwrap();
-        let data_len = cur.read_u32::<LittleEndian>().unwrap();
+        let data_idx = cur.read_u32::<LittleEndian>().unwrap() as usize;
+        let data_len = cur.read_u32::<LittleEndian>().unwrap() as usize;
 
         let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
         // Skip over the index_count 4-byte hunk and the index items
-        let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx as usize;
-        let str_len = data_len - 1; // slice off NUL terminal
+        let data_start = INDEX_COUNT_SERIAL_SIZE + index_len + data_idx;
+        let str_len = data_len - DATA_DELIM.len();
 
         // NB: malicious index data (i.e. with a bad idx or len) could make this panic for OOB
         // access
-        let data: &[u8] = &self.as_bytes()[data_start..data_start + str_len as usize];
+        let data: &[u8] = &self.as_bytes()[data_start..data_start + str_len];
         std::str::from_utf8(data).ok()
     }
 
-    // TODO: iter_strs
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
         // Advanced in the loop below
         let mut index_cursor = Cursor::new(self.as_bytes());
         let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
 
-        let index_len = index_count as usize * INDEX_ITEM_SERIAL_SIZE;
+        let index_len = index_count * INDEX_ITEM_SERIAL_SIZE;
         let blob_start = INDEX_COUNT_SERIAL_SIZE + index_len;
         let blob = &self.as_bytes()[blob_start..];
 
         (0..index_count).map(move |_| {
             let data_idx = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
             let data_len = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
-            let str_len = data_len - 1; // slice off NUL terminal
+            let str_len = data_len - DATA_DELIM.len();
             std::str::from_utf8(&blob[data_idx..data_idx + str_len]).expect("invalid UTF-8")
         })
     }
@@ -130,8 +135,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // debug function
+    // debug printing function
     fn xxd(xs: &[u8]) {
         for (i, x) in xs.iter().enumerate() {
             print!("{:02x}", x);
@@ -155,7 +159,7 @@ mod tests {
     #[test]
     fn test_collect() {
         let input = vec!["Foo", "Bar", "Hello world"];
-        let buffo = Buffo::str_array(input.clone());
+        let buffo = Buffo::str_array(&input);
         xxd(buffo.as_bytes());
         let output: Vec<&str> = buffo.iter_strs().collect();
         assert_eq!(input, output);
