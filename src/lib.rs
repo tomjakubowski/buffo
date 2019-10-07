@@ -7,7 +7,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::{
     convert::TryInto,
-    io::{self, Cursor, Write},
+    io::{self, Write},
     mem::size_of,
 };
 
@@ -65,13 +65,10 @@ impl Buffo {
     }
 
     pub fn iter_strs(&self) -> impl Iterator<Item = &str> {
-        let mut index_cursor = Cursor::new(self.as_bytes());
-        let index_count = index_cursor.read_u32::<LittleEndian>().unwrap() as usize;
-
         let blob = self.data_blob();
 
-        (0..index_count).map(move |_| {
-            let item = IndexItem::buffo_read(&mut index_cursor).unwrap();
+        (0..self.index_count()).map(move |i| {
+            let item = self.nth_index_item(i).unwrap();
             let datum_idx = item.idx as usize;
             let datum_len = item.len as usize;
             let str_len = datum_len - DATA_DELIM.len();
